@@ -84,8 +84,16 @@ def split_label(label: object) -> tuple[str, str]:
     else:
         process_type = "CADASTRO"
 
-    responsible_match = re.search(r"RESP[:\s-]+([A-ZÀ-Ü]+)", text)
-    responsible = responsible_match.group(1).title() if responsible_match else "Outros"
+    if process_type == "REPOSIÇÃO":
+        responsible = "Yara"
+    elif "NATHAN" in text:
+        responsible = "Nathan"
+    elif "DUDA" in text:
+        responsible = "Duda"
+    elif "DIEGO" in text:
+        responsible = "Diego"
+    else:
+        responsible = "Outros"
 
     return process_type, responsible
 
@@ -125,7 +133,10 @@ def process_crm(input_file: Path = INPUT_FILE, output_file: Path = OUTPUT_FILE) 
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     df[final_columns].to_excel(output_file, index=False)
+    print("✅ SUCESSO! Arquivo processado e salvo.")
+    print(f"📁 Destino: {output_file}")
 
 
 if __name__ == "__main__":
     process_crm()
+    
