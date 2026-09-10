@@ -85,13 +85,13 @@ def split_label(label: object) -> tuple[str, str]:
         process_type = "CADASTRO"
 
     if process_type == "REPOSIÇÃO":
-        responsible = "Yara"
-    elif "NATHAN" in text:
-        responsible = "Nathan"
-    elif "DUDA" in text:
-        responsible = "Duda"
-    elif "DIEGO" in text:
-        responsible = "Diego"
+        responsible = "Responsável A"
+    elif "RESPONSAVEL_B" in text:
+        responsible = "Responsável B"
+    elif "RESPONSAVEL_C" in text:
+        responsible = "Responsável C"
+    elif "RESPONSAVEL_D" in text:
+        responsible = "Responsável D"
     else:
         responsible = "Outros"
 
@@ -139,4 +139,3 @@ def process_crm(input_file: Path = INPUT_FILE, output_file: Path = OUTPUT_FILE) 
 
 if __name__ == "__main__":
     process_crm()
-    
