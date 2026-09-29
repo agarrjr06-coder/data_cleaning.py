@@ -2,6 +2,9 @@
 
 O script extrai informações de campos textuais, normaliza datas e gera
 uma base final pronta para análise ou carga em banco de dados.
+
+Os nomes e regras abaixo foram generalizados para uso demonstrativo em
+portfólio. Ajuste os mapeamentos conforme a realidade de cada operação.
 """
 
 from pathlib import Path
@@ -13,9 +16,15 @@ import pandas as pd
 INPUT_FILE = Path("data/input/crm.xlsx")
 OUTPUT_FILE = Path("data/output/crm_clean.xlsx")
 
+RESPONSIBLE_RULES = {
+    "ANALISTA A": ["ANALISTA A", "RESPONSAVEL A"],
+    "ANALISTA B": ["ANALISTA B", "RESPONSAVEL B"],
+    "ANALISTA C": ["ANALISTA C", "RESPONSAVEL C"],
+}
+
 
 def extract_title_fields(title: object) -> list[str]:
-    text = str(title).strip()
+    text = "" if pd.isna(title) else str(title).strip()
 
     date_match = re.search(r"^(\d{2}[/-]\d{2}[/-]\d{2,4})", text)
     emission_date = date_match.group(1) if date_match else ""
@@ -23,48 +32,46 @@ def extract_title_fields(title: object) -> list[str]:
     value_match = re.search(r"(\d[\d.,]*,\d{2})$", text)
     invoice_value = value_match.group(1) if value_match else "0,00"
 
-    nf_match = re.search(r"(?:N°\.:|NF:?)\s*([\d.]+)", text)
+    nf_match = re.search(r"(?:N[°º]?\.?|NF)\s*[:.-]?\s*([\d.]+)", text, re.IGNORECASE)
     if nf_match:
         raw_nf = nf_match.group(1).replace(".", "")
-        invoice_number = str(int(raw_nf)) if raw_nf.isdigit() else raw_nf
+        invoice_number = raw_nf.lstrip("0") or "0"
     else:
-        numbers = re.findall(r"\d{5,10}", text)
-        invoice_number = str(int(numbers[0])) if numbers else "S/N"
+        numbers = re.findall(r"\b\d{5,10}\b", text)
+        invoice_number = numbers[0].lstrip("0") if numbers else "S/N"
 
-    volume_match = re.search(r"(\d+)\s*(?:Volume|Vol)", text, re.IGNORECASE)
+    volume_match = re.search(r"(\d+)\s*(?:Volumes?|Vol)\b", text, re.IGNORECASE)
     volume = volume_match.group(1) if volume_match else "1"
 
     remainder = text
     if emission_date:
-        remainder = remainder.replace(emission_date, "")
-    if invoice_value:
-        remainder = remainder.replace(invoice_value, "")
+        remainder = remainder.replace(emission_date, " ")
+    if value_match:
+        remainder = remainder[: value_match.start()]
 
     junk_patterns = [
-        r"(?i)N°\s*[:.]*",
+        r"(?i)N[°º]?\s*[:.\-]*",
         r"(?i)VALOR TOTAL DA NOTA",
         r"(?i)VALOR TOTAL",
         r"(?i)VALOR",
         r"(?i)Volumes?",
-        r"(?i)NF:?",
+        r"(?i)NF\s*:?",
         r"\bDA\b",
-        r"\.\.",
-        r"-",
-        r"/",
-        r"\.",
+        r"[\-/]+",
+        r"\.{2,}",
     ]
 
     for pattern in junk_patterns:
         remainder = re.sub(pattern, " ", remainder)
 
-    remainder = re.sub(r"\d+", " ", remainder)
+    remainder = re.sub(r"\b\d+\b", " ", remainder)
     brand = " ".join(remainder.split()).strip()
 
     return [emission_date, brand, invoice_number, volume, invoice_value]
 
 
-def normalize_date(value: str) -> str:
-    if not value:
+def normalize_date(value: object) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
         return "REVISAR"
 
     parsed = pd.to_datetime(value, dayfirst=True, errors="coerce")
@@ -74,28 +81,32 @@ def normalize_date(value: str) -> str:
     return parsed.strftime("%d/%m/%Y %H:%M:%S")
 
 
-def split_label(label: object) -> tuple[str, str]:
-    text = str(label).upper()
+def identify_process_type(label: object) -> str:
+    text = "" if pd.isna(label) else str(label).upper()
 
     if "REPOSI" in text:
-        process_type = "REPOSIÇÃO"
-    elif "INCLU" in text:
-        process_type = "INCLUSÃO"
-    else:
-        process_type = "CADASTRO"
+        return "REPOSIÇÃO"
+    if "INCLU" in text:
+        return "INCLUSÃO"
+    return "CADASTRO"
 
-    if process_type == "REPOSIÇÃO":
-        responsible = "Yara"
-    elif "NATHAN" in text:
-        responsible = "Nathan"
-    elif "DUDA" in text:
-        responsible = "Duda"
-    elif "DIEGO" in text:
-        responsible = "Diego"
-    else:
-        responsible = "Outros"
 
-    return process_type, responsible
+def identify_responsible(label: object) -> str:
+    text = "" if pd.isna(label) else str(label).upper()
+
+    for responsible, aliases in RESPONSIBLE_RULES.items():
+        if any(alias in text for alias in aliases):
+            return responsible
+
+    return "OUTROS"
+
+
+def validate_columns(df: pd.DataFrame, required_columns: list[str]) -> None:
+    missing = [column for column in required_columns if column not in df.columns]
+    if missing:
+        raise ValueError(
+            "Colunas obrigatórias ausentes no arquivo de entrada: " + ", ".join(missing)
+        )
 
 
 def process_crm(input_file: Path = INPUT_FILE, output_file: Path = OUTPUT_FILE) -> None:
@@ -103,22 +114,19 @@ def process_crm(input_file: Path = INPUT_FILE, output_file: Path = OUTPUT_FILE) 
         raise FileNotFoundError(f"Arquivo não encontrado: {input_file}")
 
     df = pd.read_excel(input_file)
+    validate_columns(df, ["Title", "Due", "Labels"])
 
     extracted = df["Title"].apply(extract_title_fields)
     df["Data Emissão Raw"] = [row[0] for row in extracted]
     df["Marca"] = [row[1] for row in extracted]
     df["N° NF"] = [row[2] for row in extracted]
-    df["Volume"] = [row[3] for row in extracted]
+    df["Volume"] = pd.to_numeric([row[3] for row in extracted], errors="coerce").fillna(1).astype(int)
     df["Valor NF"] = [row[4] for row in extracted]
 
     df["Data Emissão"] = df["Data Emissão Raw"].apply(normalize_date)
-    df["Data finalização"] = pd.to_datetime(
-        df["Due"], dayfirst=True, errors="coerce"
-    ).dt.strftime("%d/%m/%Y %H:%M:%S")
-
-    df[["Tipo NF", "Responsável"]] = df["Labels"].apply(
-        lambda value: pd.Series(split_label(value))
-    )
+    df["Data finalização"] = df["Due"].apply(normalize_date)
+    df["Tipo NF"] = df["Labels"].apply(identify_process_type)
+    df["Responsável"] = df["Labels"].apply(identify_responsible)
 
     final_columns = [
         "Data Emissão",
@@ -133,10 +141,10 @@ def process_crm(input_file: Path = INPUT_FILE, output_file: Path = OUTPUT_FILE) 
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     df[final_columns].to_excel(output_file, index=False)
-    print("✅ SUCESSO! Arquivo processado e salvo.")
+
+    print("✅ Arquivo processado com sucesso.")
     print(f"📁 Destino: {output_file}")
 
 
 if __name__ == "__main__":
     process_crm()
-    
